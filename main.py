@@ -11,7 +11,8 @@ from notion.client import NotionClient
 from notion.block import Block, TextBlock, BulletedListBlock, HeaderBlock, \
     SubheaderBlock, SubsubheaderBlock, NumberedListBlock
 from notion.collection import CollectionRowBlock, PageBlock
-from numpy import block
+from notion2md.exporter import block_string_exporter
+
 
 
 class NotionException(Exception):
@@ -59,31 +60,22 @@ def process_block_children(block: Block):
     
     return _block_to_markdown(block)
 
-def get_markdown_file_by_id(data_path: Path, block_title: str, block_id: str):
-    block_file_id = block_id.replace("-", "")
-    for block_md_file in data_path.glob(f"*{block_file_id}*"):
-        md_content = ""
-        with block_md_file.open("rt") as f:
-            for l in f:
-                if l.find(block_title) == -1:
-                    md_content += l
-
-    return md_content
 
 def process_view_blocks(data_path: Path, backlog_view_url: str):
-    notion_token = os.environ.get("NOTION_TOKEN", None)
+    notion_token = os.environ.get("NOTION_USER_TOKEN", None)
+
     if notion_token is None or len(notion_token.strip()) == 0:
         raise NotionException("No Notion token given in environment variable NOTION_TOKEN.")
-
+    
     notion_client = NotionClient(token_v2=notion_token)
     cv = notion_client.get_collection_view(backlog_view_url)
 
-    for cv_block in cv.collection.get_rows(limit=-1):
+    for cv_block in cv.collection.get_rows(limit=200):
         backlog_item = {}
         if cv_block.status == "Backlog" and cv_block.name != "Post-alpha":
             backlog_item["title"] = cv_block.title
             backlog_item["area"] = cv_block.functionality
-            backlog_item["body"] = get_markdown_file_by_id(data_path, cv_block.title, cv_block.id)
+            backlog_item["body"] = block_string_exporter(id=cv_block.id)
 
             yield backlog_item, cv_block
 
@@ -102,10 +94,10 @@ def main():
         for backlog_item, block in tqdm(process_view_blocks(markdown_file_path, args.backlog_view_url)):
             issue = gh_api.issues.create(
                 title=backlog_item["title"],
-                body=backlog_item["body"]
+                body=backlog_item["body"],
+                labels=[backlog_item["area"]] if backlog_item["area"] is not None else []
             )
             block.github_issue_url = issue.url
-            
 
     except NotionException as e:
         print(e.message)
